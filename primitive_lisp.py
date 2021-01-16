@@ -1,6 +1,6 @@
 import re, traceback, pdb, sys
 
-debug_mode = False
+debug_mode = True
 def auto_debug(e,v,t):
     traceback.print_exception(e,v,t)
     pdb.post_mortem(t)
@@ -11,15 +11,22 @@ def pretty_tokens(tokens):
     s = re.sub('\\) ([\')])',')\\1',re.sub('([\'(]) \\(','\\1(',re.sub('\\s*([()\'])\\s*','\\1',s).replace("'"," '").replace('(',' (').replace(')',') ')))
     return s
 
+
+    
 class LambdaFunction():
-    def __init__(self,arguments,expr,tokens):
+    def __init__(self,arguments,expr,tokens,variables=None):
         self.arguments = arguments
         self.expr = expr
         self.tokens = tokens
+        if variables is None:
+            variables = {}
+        self.variables = variables
     def __str__(self):
         return pretty_tokens(self.tokens)
     def __repr__(self):
         return str(self)
+
+
 
 class QuotedAtom():
     def __init__(self,atom):
@@ -73,10 +80,11 @@ class QuotedList():
 class State():
     def __init__(self,**kwargs):
         self.__dict__.update(kwargs)
-    def eval(self):
+    def eval(self,variables):
         if debug_mode:
             print('-'*80)
             print(f'eval: {self.name}: {str(self)}')
+            print(f'args: {self.arguments}')
             pdb.set_trace()
         if self.operator == 'quote':
             if len(self.arguments) != 1:
@@ -134,9 +142,21 @@ class State():
                 pdb.set_trace() #dotted pair
 
         elif isinstance(self.operator,LambdaFunction):
-            variables = {arg_name:arg_value for arg_name,arg_value in zip(self.operator.arguments,self.arguments)}
-
+            variables = dict(self.operator.variables)
+            variables.update({arg_name:arg_value for arg_name,arg_value in zip(self.operator.arguments,self.arguments)})
             return lisp(self.operator.expr.expr(),variables)
+
+        elif self.operator == 'label':
+            label,lambda_func = self.arguments
+            label_func = LambdaFunction(lambda_func.arguments,lambda_func.expr,self.tokens)
+            label_func.variables[label] = label_func
+            return label_func
+        elif self.operator == 'defun':
+            label,lambda_args, lambda_expr = self.arguments
+            label_func = LambdaFunction(lambda_args,lambda_expr,self.tokens)
+            label_func.variables[label] = label_func
+            variables[label] = label_func
+            return label_func
 
         else:
             print('Unknown operator: %s' % self.operator)
@@ -207,6 +227,13 @@ def lisp(expr,variables = None):
                         operator=None,
                         arguments=[],
                         tokens=['\'('],
+                        )
+            elif state.operator == 'label' or state.operator == 'defun':
+                state = State(
+                        name='list_quote',
+                        operator=None,
+                        arguments=[],
+                        tokens=['('],
                         )
 
             elif state.name == 'list_lambda':
@@ -281,7 +308,7 @@ def lisp(expr,variables = None):
             expr = expr[1:]
         elif expr[0] == ')':
             state.tokens.append(')')
-            value = state.eval()
+            value = state.eval(variables)
             lower_tokens = state.tokens
             state = stack.pop()
             state.tokens.extend(lower_tokens)
@@ -298,8 +325,8 @@ def lisp(expr,variables = None):
                     state = stack.pop()
                     state.tokens.extend(lower_tokens)
                     state.arguments.append(value)
-                elif state.name == 'list_cond':
-                    if value[0] == '#t':
+                elif state.name == 'list_cond' and state.found_term is False:
+                    if value[0] == '#t' and len(value) == 2:
                         state.found_term = True
                         state.value = value[1]
             expr = expr[1:]
@@ -314,13 +341,13 @@ def lisp(expr,variables = None):
             expr = expr[1:]
         else:
             #atom
-            m = re.match('[A-Za-z0-9._]+',expr)
+            m = re.match('[A-Za-z0-9._#]+',expr)
             token = m.group(0)
             expr = expr[m.end(0):]
             state.tokens.append(token)
 
             if state.name == 'list_operator':
-                if token in ['quote','atom','eq','car','cdr','cons','cond','lambda']:
+                if token in ['quote','atom','eq','car','cdr','cons','cond','lambda','label','defun']:
                     state.operator = token
                 else:
                     value = evaluate_atom(token,variables)
@@ -343,6 +370,9 @@ def lisp(expr,variables = None):
             elif state.name == 'list_arguments':
                 if state.operator == 'quote':
                     value = token
+                elif state.operator == 'label' or state.operator == 'defun':
+                    if len(state.arguments) == 0:
+                        value = token
                 else:
                     value = evaluate_atom(token,variables)
                 state.arguments.append(value)
@@ -360,6 +390,7 @@ def lisp(expr,variables = None):
                 else:
                     if state.arguments[0] == '#t':
                         value = evaluate_atom(token,variables)
+                        state.arguments.append(value)
                     else:
                         state.arguments.append(token)
             elif state.name == 'sugar_quote':
@@ -381,12 +412,21 @@ def lisp(expr,variables = None):
     return result
 
 if __name__ == '__main__':
+    variables = {}
+    expr = "(defun subst (x y z) (cond ((atom z) (cond ((eq z y) x) ('#t z))) ('#t (cons (subst x y (car z)) (subst x y (cdr z))))))"
+    debug_mode = False
+    lisp(expr,variables)
+    expr = "(subst 'm 'b '(a b (a b c) d))"
+    debug_mode = False
+    result = lisp(expr,variables)
+    print('=',str(result))
     while True:
         expr = input('> ')
         try:
-            result = lisp(expr)
+            result = lisp(expr,variables)
             print('=',str(result))
         except KeyboardInterrupt:
             break
         except:
             traceback.print_exc()
+        break
