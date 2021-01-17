@@ -4,7 +4,7 @@ I created this in order to learn more about Lisp.
 Goal is to develop the minimal lisp (with minor differences) to Paul Graham's [Root of Lisp paper](http://www.paulgraham.com/rootsoflisp.html). 
 The paper is only present in post-script, so I included a pdf version [here](https://raw.githubusercontent.com/mmiguel6288code/primitive_lisp/main/jmc.pdf).
 
-This simple interpreter implements all the examples in the paper. There are some minor differences, for example I use '#f for falsity (like Scheme) instead of '() like in the paper.
+This simple interpreter implements all the examples in the paper. There are some minor differences. For example, I use '#f for falsity (like Scheme) instead of '() like in the paper.
 
 Operators built into the interpreter:
 - quote
