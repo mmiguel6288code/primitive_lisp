@@ -1,3 +1,133 @@
+"""
+>>> lisp = Lisp()
+>>> lisp('''
+... (quote a)
+... 'a
+... (quote (a b c))
+... ''')
+[Atom('a'), Atom('a'), List('(a b c)')]
+
+>>> lisp('''
+... (atom 'a)
+... (atom '(a b c))
+... (atom '())
+... ''')
+[Atom('#t'), Atom('#f'), Atom('#t')]
+
+>>> lisp('''
+... (atom (atom 'a))
+... (atom '(atom 'a))
+... ''')
+[Atom('#t'), Atom('#f')]
+
+>>> lisp('''
+... (eq 'a 'a)
+... (eq 'a 'b)
+... (eq '() '())
+... ''')
+[Atom('#t'), Atom('#f'), Atom('#t')]
+
+>>> lisp("(car '(a b c))")
+[Atom('a')]
+
+>>> lisp("(cdr '(a b c))")
+[List('(b c)')]
+
+>>> lisp('''
+... (cons 'a '(b c))
+... (cons 'a (cons 'b (cons 'c '())))
+... (car (cons 'a '(b c)))
+... (cdr (cons 'a '(b c)))
+... ''')
+[List('(a b c)'), List('(a b c)'), Atom('a'), List('(b c)')]
+
+>>> lisp('''
+... (cond ((eq 'a 'b) 'first)
+...     ((atom 'a) 'second))
+... ''')
+[Atom('second')]
+
+>>> lisp('''
+... ((lambda (x) (cons x '(b))) 'a)
+... ((lambda (x y) (cons x (cdr y)))
+...   'z
+...   '(a b c))
+... ((lambda (f) (f '(b c)))
+...   '(lambda (x) (cons 'a x)))
+... ''')
+[List('(a b)'), List('(z b c)'), List('(a b c)')]
+
+>>> lisp('''
+... (subst 'm 'b '(a b (a b c) d))
+... ''')
+[List('(a m (a m c) d)')]
+
+>>> lisp('''
+... (cadr '((a b) (c d) e))
+... (caddr '((a b) (c d) e))
+... (cdar '((a b) (c d) e))
+... (cons 'a ( cons 'b ( cons 'c '())))
+... (list 'a 'b 'c)
+... ''')
+[List('(c d)'), Atom('e'), List('(b)'), List('(a b c)'), List('(a b c)')]
+
+>>> lisp('''
+... (null 'a)
+... (null '())
+... ''')
+[Atom('#f'), Atom('#t')]
+
+>>> lisp('''
+... (and (atom 'a) (eq 'a 'a))
+... (and (atom 'a) (eq 'a 'b))
+... ''')
+[Atom('#t'), Atom('#f')]
+
+>>> lisp('''
+... (not (eq 'a 'a))
+... (not (eq 'a 'b))
+... ''')
+[Atom('#f'), Atom('#t')]
+
+>>> lisp('''
+... (concat '(a b) '(c d))
+... (concat '() '(c d))
+... ''')
+[List('(a b c d)'), List('(c d)')]
+
+>>> lisp('''
+... (zip '(x y z) '(a b c))
+... ''')
+[List('((x a) (y b) (z c))')]
+
+>>> lisp('''
+... (assoc 'x '((x a) (y b)))
+... (assoc 'x '((x new) (x a) (y b)))
+... ''')
+[Atom('a'), Atom('new')]
+
+>>> lisp('''
+... (eval 'x '((x a) (y b)))
+... (eval '(eq 'a 'a) '())
+... (eval '(cons x '(b c))
+...     '((x a) (y b)))
+... (eval '(cond ((atom x) 'atom)
+...     ('t 'list))
+...   '((x '(a b))))
+... (eval '(f '(b c))
+...    '((f (lambda (x) (cons 'a x)))))
+... (eval '((label firstatom (lambda (x)
+...     (cond ((atom x) x)
+...         ('t (firstatom (car x))))))
+...   y)
+...  '((y ((a b) (c d)))))
+... (eval '((lambda (x y) (cons x (cdr y)))
+...     'a
+...     '(b c d))
+...   '())
+... ''')
+[Atom('a'), Atom('#t'), List('(a b c)'), Quote("'list"), List("('a b c)"), Atom('a'), List("('a c d)")]
+"""
 import re, traceback, pdb, sys, readline, logarhythm
 
 logger = logarhythm.get_logger()
@@ -108,11 +238,11 @@ class Expression():
         self.expr = expr
         self.__dict__.update(kwargs)
         self.parse(expr)
-        self.expr = expr[:len(self)]
+        self.expr = expr[:self.consumed_chars]
     def resume(self,expr):
-        original_length = len(self)
+        original_length = self.consumed_chars
         self.parse(expr,resume=True)
-        self.expr += expr[:len(self)-original_length]
+        self.expr += expr[:self.consumed_chars-original_length]
     def parse_start_trace(self):
         if logger.level > logarhythm.DEBUG:
             return
@@ -126,6 +256,7 @@ class Expression():
         for i,parsed in enumerate(ancestry,1):
             lines.append(indent*i+repr(parsed))
         logger.debug('\n'.join(lines))
+
     def parse_end_trace(self):
         if logger.level > logarhythm.DEBUG:
             return
@@ -139,6 +270,7 @@ class Expression():
         indent_level = 1
         self._parse_end_trace(indent,indent_level,lines)
         logger.debug('\n'.join(lines))
+
     def _parse_end_trace(self,indent,indent_level,lines):
         for parsed in self.subexpressions:
             lines.append(indent*(indent_level+1)+repr(parsed))
@@ -202,22 +334,20 @@ class Expression():
     def consume(self,subexpression,expr):
         if not (len(self.subexpressions) > 0 and self.current_child is self.subexpressions[-1]):
             self.subexpressions.append(subexpression)
-            self.consumed_chars += len(subexpression)
+            self.consumed_chars += subexpression.consumed_chars
         if self.current_child.complete:
             self.current_child = None
-        return expr[len(subexpression):]
+        return expr[subexpression.consumed_chars:]
 
     def close(self,expr):
         self.complete = True
         return expr
 
-    def __len__(self):
-        return self.consumed_chars
     def __repr__(self):
         if self.complete:
-            return f'{type(self).__name__}({repr(self.expr[:len(self)])})'
+            return f'{type(self).__name__}({repr(self.expr[:self.consumed_chars])})'
         else:
-            return f'{type(self).__name__}({repr(self.expr[:len(self)])},complete=False)'
+            return f'{type(self).__name__}({repr(self.expr[:self.consumed_chars])},complete=False)'
     def __call__(self,evaluator=None,quoted=False,local_variables=None):
         if quoted:
             results = list(self.subexpressions)
@@ -267,13 +397,13 @@ class Quote(Expression):
         self.expr = expr
         self.__dict__.update(kwargs)
         self.parse(expr[1:],single=True)
-        self.expr = expr[:len(self)]
+        self.expr = expr[:self.consumed_chars]
     def consume(self,subexpression,expr):
         self.subexpression = subexpression
-        self.consumed_chars += len(subexpression)
+        self.consumed_chars += subexpression.consumed_chars
         if self.current_child.complete:
             self.current_child = None
-        return expr[len(subexpression):]
+        return expr[subexpression.consumed_chars:]
     def __call__(self,evaluator=None,quoted=True,local_variables=None):
         return self.subexpression(evaluator,quoted=True,local_variables=local_variables)
     def _parse_end_trace(self,indent,indent_level,lines):
@@ -316,17 +446,17 @@ class List(Expression):
         self.expr = expr
         self.__dict__.update(kwargs)
         self.parse(expr[1:])
-        self.expr = expr[:len(self)]
+        self.expr = expr[:self.consumed_chars]
     def close(self,expr):
         self.consumed_chars += 1
         self.complete = True
         return expr[1:]
     def consume(self,subexpression,expr):
         self.subexpressions.append(subexpression)
-        self.consumed_chars += len(subexpression)
+        self.consumed_chars += subexpression.consumed_chars
         if self.current_child.complete:
             self.current_child = None
-        return expr[len(subexpression):]
+        return expr[subexpression.consumed_chars:]
     def __iter__(self):
         yield from self.subexpressions
     def __call__(self,evaluator=None,quoted=False,local_variables=None):
@@ -542,15 +672,6 @@ class Evaluator():
         return value
     def op_list(self,parsed_list,local_variables,*args):
         return List(f'({" ".join([arg(self,local_variables=local_variables).expr for arg in args])})')
-
-
-        
-
-
-
-
-
-
 
 
 if __name__ == '__main__':
